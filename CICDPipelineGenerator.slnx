@@ -1,0 +1,22 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path="Directory.Build.props" />
+    <File Path="global.json" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/CICDPipelineGenerator.Application/CICDPipelineGenerator.Application.csproj" />
+    <Project Path="src/CICDPipelineGenerator.Domain/CICDPipelineGenerator.Domain.csproj" />
+    <Project Path="src/CICDPipelineGenerator.Infrastructure/CICDPipelineGenerator.Infrastructure.csproj" />
+    <Project Path="src/CICDPipelineGenerator.Server/CICDPipelineGenerator.Server.csproj" />
+    <Project Path="src/cicdpipelinegenerator.client/cicdpipelinegenerator.client.esproj">
+      <Build />
+      <Deploy />
+    </Project>
+  </Folder>
+  <Folder Name="/src/tests/">
+    <Project Path="src/tests/CICDPipelineGenerator.Domain.UnitTests/CICDPipelineGenerator.Domain.UnitTests.csproj" />
+    <Project Path="src/tests/CICDPipelineGenerator.Server.IntegrationTests/CICDPipelineGenerator.Server.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

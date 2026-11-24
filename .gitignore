@@ -1,0 +1,16 @@
+bin/
+obj/
+node_modules/
+.angular/
+src/CICDPipelineGenerator.Server/wwwroot/
+*.user
+.vs/
+TestResults/
+*.tfstate
+*.tfstate.*
+
+# Atlassian publishes this schema without a licence: the tests use it when it is there (see Schemas/README.md).
+src/tests/CICDPipelineGenerator.Domain.UnitTests/Schemas/bitbucket-pipelines.json
+
+# Visual Studio writes its own ports here; the app chooses its port in Program.cs.
+src/CICDPipelineGenerator.Server/Properties/launchSettings.json

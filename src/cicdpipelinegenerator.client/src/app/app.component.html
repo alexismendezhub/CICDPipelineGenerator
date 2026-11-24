@@ -1,0 +1,1015 @@
+<header class="bar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">⟳</span>
+    <strong>CI/CD Pipeline Generator</strong>
+    <span class="muted">deployment pipelines, written for you</span>
+  </div>
+  <div class="actions">
+    <button type="button" class="ai" (click)="openDescribe()" [disabled]="revision() === 0 || !aiStatus()?.enabled || !!proposal()"
+            [title]="aiStatus()?.enabled ? 'Describe what you want to deploy; the AI proposes the settings' : (aiStatus()?.problem ?? '')">✦ Describe with AI</button>
+    <button type="button" (click)="newPipeline()" title="Clears the settings and starts an empty pipeline">New pipeline</button>
+    <select aria-label="Open an example" (change)="example($event)">
+      <option value="">Open an example…</option>
+      @for (name of examples(); track name) {
+        <option [value]="name">{{ name }}</option>
+      }
+    </select>
+    <label class="button">Open settings<input type="file" accept=".json" hidden (change)="open($event)"></label>
+    <label class="button" title="Reads a pipeline you already have and proposes the settings that write one like it">Open a pipeline file<input type="file" multiple hidden (change)="importYaml($event)"></label>
+    <button type="button" (click)="save()" [disabled]="revision() === 0">Save settings</button>
+    <button type="button" class="primary" (click)="downloadAll()" [disabled]="errors().length > 0 || !result() || !!proposal()">Download all (.zip)</button>
+  </div>
+</header>
+
+@if (revision() > 0) {
+  <main class="layout">
+    <form class="settings" autocomplete="off" (submit)="$event.preventDefault()" [class.locked]="!!proposal()" [attr.inert]="proposal() ? '' : null">
+      <section>
+        <h2>1. Project</h2>
+        <div class="row">
+          <label>Name
+            <input name="name" [(ngModel)]="spec.name" (ngModelChange)="changed()" placeholder="my-app" autocomplete="off">
+          </label>
+          <label>Repository <span class="muted">(for the setup guide)</span>
+            <input name="repository" [(ngModel)]="spec.repository" (ngModelChange)="changed()" placeholder="owner/repository" autocomplete="off">
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" name="setupScript" [(ngModel)]="spec.setupScript" (ngModelChange)="changed()">
+          Also write the scripts that do the one-time setup (GitHub Actions, Azure DevOps and GitLab with Azure)
+        </label>
+      </section>
+
+      <section>
+        <h2>2. Pipeline systems</h2>
+        <div class="choices">
+          @for (platform of platforms; track platform.value) {
+            <label class="choice" [class.on]="uses(platform.value)">
+              <input type="checkbox" [checked]="uses(platform.value)" (change)="togglePlatform(platform.value, $any($event.target).checked)">
+              <span><strong>{{ platform.label }}</strong><small>{{ platform.hint }}</small></span>
+            </label>
+          }
+        </div>
+      </section>
+
+      <section>
+        <h2>3. Deploy to</h2>
+        <label>Target
+          <select name="target" [(ngModel)]="spec.deploy.target" (ngModelChange)="changed()">
+            @for (target of targets; track target.value) {
+              <option [ngValue]="target.value">{{ target.label }}</option>
+            }
+          </select>
+        </label>
+        <p class="hint">{{ targetHint }}</p>
+
+        @if (usesSlot) {
+          <label>Operating system
+            <select name="os" [(ngModel)]="spec.deploy.os" (ngModelChange)="changed()">
+              <option ngValue="linux">Linux</option>
+              <option ngValue="windows">Windows</option>
+            </select>
+          </label>
+        }
+
+        @if (isContainer) {
+          @if (isGenericRegistry) {
+            <label>Registry
+              <select name="registryKind" [(ngModel)]="spec.deploy.registryKind" (ngModelChange)="changed()">
+                @for (kind of registryKinds; track kind.value) {
+                  <option [ngValue]="kind.value">{{ kind.label }}</option>
+                }
+              </select>
+            </label>
+          }
+          <div class="row">
+            @if (isGenericRegistry) {
+              <label>{{ spec.deploy.registryKind === 'other' ? 'Registry address' : spec.deploy.registryKind === 'gitHub' ? 'Owner' : 'User or organisation' }}
+                <input name="registry" [(ngModel)]="spec.deploy.registry" (ngModelChange)="changed()" [placeholder]="spec.deploy.registryKind === 'other' ? 'registry.contoso.com/team' : 'contoso'" autocomplete="off">
+              </label>
+            } @else {
+              <label>{{ isAws ? 'Not used on AWS' : isCloud ? 'Artifact Registry repository' : 'Container registry' }} <span class="muted">(name only)</span>
+                <input name="registry" [(ngModel)]="spec.deploy.registry" (ngModelChange)="changed()" placeholder="myregistry" autocomplete="off">
+              </label>
+            }
+            <label>Image name
+              <input name="imageName" [(ngModel)]="spec.deploy.imageName" (ngModelChange)="changed()" placeholder="my-app" autocomplete="off">
+            </label>
+          </div>
+          <div class="row">
+            <label>Dockerfile
+              <input name="dockerfile" [(ngModel)]="spec.deploy.dockerfile" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+            <label>Build folder
+              <input name="dockerContext" [(ngModel)]="spec.deploy.dockerContext" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+          </div>
+          @if (isGenericRegistry || spec.deploy.target === 'awsEcs' || spec.deploy.target === 'awsEks') {
+            <label class="check">
+              <input type="checkbox" name="signImage" [(ngModel)]="spec.deploy.signImage" (ngModelChange)="changed()">
+              Sign the image (cosign, with the key in the secret COSIGN_PRIVATE_KEY)
+            </label>
+          }
+        }
+
+        @if (isCloud) {
+          <div class="row">
+            <label>Region
+              <input name="cloudRegion" [(ngModel)]="spec.deploy.cloudRegion" (ngModelChange)="changed()" [placeholder]="isAws ? 'us-east-1' : 'us-central1'" autocomplete="off">
+            </label>
+            @if (spec.deploy.target === 'awsElasticBeanstalk') {
+              <label>S3 bucket for the versions
+                <input name="bucket" [(ngModel)]="spec.deploy.bucket" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+            @if (spec.deploy.target === 'awsEcs') {
+              <label>Container in the task definition
+                <input name="containerName" [(ngModel)]="spec.deploy.containerName" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+            @if (spec.deploy.target === 'gcpCloudFunctions') {
+              <label>Runtime
+                <input name="functionRuntime" [(ngModel)]="spec.deploy.functionRuntime" (ngModelChange)="changed()" placeholder="nodejs22" autocomplete="off">
+              </label>
+              <label>Entry point
+                <input name="functionEntryPoint" [(ngModel)]="spec.deploy.functionEntryPoint" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+            @if (spec.deploy.target === 'gcpAppEngine') {
+              <label>app.yaml
+                <input name="appYaml" [(ngModel)]="spec.deploy.appYaml" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+          </div>
+        }
+
+        @if (isKubernetes) {
+          <div class="row">
+            <label>Namespace
+              <input name="namespace" [(ngModel)]="spec.deploy.namespace" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+            <label>Helm chart <span class="muted">(optional folder; empty uses manifests)</span>
+              <input name="helmChart" [(ngModel)]="spec.deploy.helmChart" (ngModelChange)="changed()" placeholder="charts/my-app" autocomplete="off">
+            </label>
+          </div>
+          <div class="row">
+            <label>{{ usesHelm ? 'Release name' : 'Deployment' }}
+              <input name="deploymentName" [(ngModel)]="spec.deploy.deploymentName" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+            @if (!usesHelm) {
+              <label>Container in the deployment
+                <input name="containerName" [(ngModel)]="spec.deploy.containerName" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+              <label>Manifests (folder or file)
+                <input name="manifests" [(ngModel)]="spec.deploy.manifests" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+          </div>
+          @if (spec.deploy.target === 'aks') {
+            <label class="check">
+              <input type="checkbox" name="entra" [(ngModel)]="spec.deploy.entraIdCluster" (ngModelChange)="changed()">
+              The cluster signs in with Microsoft Entra ID (adds kubelogin)
+            </label>
+          }
+        }
+
+        @if (isStore) {
+          <label>{{ spec.deploy.target === 'googlePlay' ? 'Package name' : spec.deploy.target === 'appStore' ? 'Bundle identifier' : 'Store product ID' }}
+            <input name="appId" [(ngModel)]="spec.deploy.appId" (ngModelChange)="changed()" [placeholder]="spec.deploy.target === 'microsoftStore' ? '9NBLGGH4R315' : 'com.contoso.app'" autocomplete="off">
+          </label>
+        }
+
+        @if (supportsStrategy) {
+          <div class="row">
+            <label>How the new version takes over
+              <select name="strategy" [(ngModel)]="spec.deploy.strategy" (ngModelChange)="changed()">
+                <option ngValue="standard">The target's own update</option>
+                <option ngValue="blueGreen">Blue-green: all the traffic at once, when it is healthy</option>
+                <option ngValue="canary">Canary: a share of the traffic first</option>
+              </select>
+            </label>
+            @if (spec.deploy.strategy === 'canary') {
+              <label>Share of the traffic (%)
+                <input type="number" name="canaryPercent" min="1" max="99" [(ngModel)]="spec.deploy.canaryPercent" (ngModelChange)="changed()">
+              </label>
+              <label>Minutes before it gets everything
+                <input type="number" name="canaryMinutes" min="1" max="120" [(ngModel)]="spec.deploy.canaryMinutes" (ngModelChange)="changed()">
+              </label>
+            }
+          </div>
+        }
+
+        @if (isWindows) {
+          <label>Keep on the server <span class="muted">(files and folders the copy never touches, one per line)</span>
+            <textarea name="keepOnServer" rows="3" [value]="spec.deploy.keepOnServer.join('\n')" (input)="spec.deploy.keepOnServer = linesOf($event); changed()"
+              placeholder="appsettings.Production.json&#10;logs" autocomplete="off" spellcheck="false"></textarea>
+          </label>
+          <div class="row">
+            <label>Seconds to stop and start
+              <input type="number" name="stopTimeoutSeconds" min="10" max="3600" [(ngModel)]="spec.deploy.stopTimeoutSeconds" (ngModelChange)="changed()">
+            </label>
+            @if (spec.deploy.target === 'windowsService') {
+              <label>Program, to create the service when missing <span class="muted">(optional)</span>
+                <input name="serviceExecutable" [(ngModel)]="spec.deploy.serviceExecutable" (ngModelChange)="changed()" placeholder="Billing.Worker.exe" autocomplete="off">
+              </label>
+            }
+          </div>
+          <p class="hint">The runner or agent on each server runs the deploy in Windows PowerShell. The previous version stays in &lt;folder&gt;.previous and comes back if the copy, the start or the check fails.</p>
+        }
+
+        @if (isWindows) {
+          <label class="check">
+            <input type="checkbox" name="remote" [(ngModel)]="spec.deploy.remote" (ngModelChange)="changed()">
+            The servers have no runner: reach them from outside ({{ spec.deploy.target === 'linuxService' ? 'SSH' : 'WinRM over HTTPS' }})
+          </label>
+          <label class="check">
+            <input type="checkbox" name="rollbackPipeline" [(ngModel)]="spec.deploy.rollbackPipeline" (ngModelChange)="changed()">
+            Also write a pipeline, started by hand, that puts the previous version back
+          </label>
+        }
+
+        @if (spec.deploy.target === 'package' && spec.deploy.publishFeed; as feed) {
+          <div class="row">
+            <label>Publish to
+              <select name="publish-kind" [(ngModel)]="feed.kind" (ngModelChange)="changed()">
+                @for (kind of feedKinds; track kind.value) {
+                  <option [ngValue]="kind.value">{{ kind.label }}</option>
+                }
+              </select>
+            </label>
+            <label>Type
+              <select name="publish-type" [(ngModel)]="feed.type" (ngModelChange)="changed()">
+                <option ngValue="nuGet">NuGet</option>
+                <option ngValue="npm">npm</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            @if (feed.kind === 'azureArtifacts' || feed.kind === 'gitHubPackages') {
+              <label>{{ feed.kind === 'azureArtifacts' ? 'Organization' : 'Owner' }}
+                <input name="publish-org" [(ngModel)]="feed.organization" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+            @if (feed.kind === 'azureArtifacts') {
+              <label>Project <span class="muted">(project-scoped feeds)</span>
+                <input name="publish-project" [(ngModel)]="feed.project" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+            @if (feed.kind === 'jFrog' || feed.kind === 'other') {
+              <label>{{ feed.kind === 'jFrog' ? 'JFrog address' : 'Feed URL' }}
+                <input name="publish-url" [(ngModel)]="feed.url" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+            @if (feed.kind === 'azureArtifacts' || feed.kind === 'jFrog') {
+              <label>{{ feed.kind === 'jFrog' ? 'Repository key' : 'Feed' }}
+                <input name="publish-feed" [(ngModel)]="feed.feed" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+          </div>
+          <p class="hint">The token that publishes is the secret FEED_PUBLISH_TOKEN (GitHub Packages and Azure Artifacts from their own system need none).</p>
+        }
+
+        @if (spec.deploy.target === 'script') {
+          <label class="check">
+            <input type="checkbox" name="scriptOnServer" [(ngModel)]="spec.deploy.scriptOnServer" (ngModelChange)="changed()">
+            Run on the environment's servers (PowerShell) instead of a hosted runner (bash)
+          </label>
+          @if (!spec.deploy.scriptOnServer) {
+            <label class="check">
+              <input type="checkbox" name="scriptSignsInToAzure" [(ngModel)]="spec.deploy.scriptSignsInToAzure" (ngModelChange)="changed()">
+              Sign in to Azure first (the Azure CLI is ready)
+            </label>
+          }
+          <label>Deploy commands <span class="muted">({{ commandShell }}, one per line; DEPLOY_ENVIRONMENT is the environment)</span>
+            <textarea name="deployCommands" rows="5" [value]="spec.deploy.deployCommands.join('\n')" (input)="spec.deploy.deployCommands = linesOf($event); changed()"
+              autocomplete="off" spellcheck="false"></textarea>
+          </label>
+        }
+
+        @if (isWindows) {
+          <label>Settings file of the build <span class="muted">(the environment's settings are written into it)</span>
+            <input name="settingsFile" [(ngModel)]="spec.deploy.settingsFile" (ngModelChange)="changed()" placeholder="appsettings.json" autocomplete="off">
+          </label>
+        }
+
+        @if (!isInfrastructure) {
+          <div class="row">
+            <label>Database changes before each deploy
+              <select name="migrations" [(ngModel)]="spec.deploy.migrations" (ngModelChange)="changed()">
+                <option ngValue="none">None</option>
+                <option ngValue="efCoreBundle">Entity Framework Core migrations</option>
+                <option ngValue="sqlScripts">SQL scripts (sqlcmd)</option>
+                <option ngValue="dacpac">Dacpac (sqlpackage)</option>
+              </select>
+            </label>
+            @if (spec.deploy.migrations === 'efCoreBundle') {
+              <label>Project with the migrations
+                <input name="migrationsProject" [(ngModel)]="spec.deploy.migrationsProject" (ngModelChange)="changed()" placeholder="src/Data/Data.csproj" autocomplete="off">
+              </label>
+            }
+            @if (spec.deploy.migrations === 'dacpac') {
+              <label>.dacpac inside the build
+                <input name="dacpacPath" [(ngModel)]="spec.deploy.dacpacPath" (ngModelChange)="changed()" placeholder="Database.dacpac" autocomplete="off">
+              </label>
+            }
+            @if (spec.deploy.migrations === 'sqlScripts') {
+              <label>Folder with the .sql files
+                <input name="migrationsFolder" [(ngModel)]="spec.deploy.migrationsFolder" (ngModelChange)="changed()" autocomplete="off">
+              </label>
+            }
+          </div>
+          @if (spec.deploy.migrations === 'sqlScripts' && isServer) {
+            <label class="check">
+              <input type="checkbox" name="sqlTrustedConnection" [(ngModel)]="spec.deploy.sqlTrustedConnection" (ngModelChange)="changed()">
+              Connect as the runner's Windows account (no SQL login)
+            </label>
+          }
+          @if (spec.deploy.migrations !== 'none') {
+            <p class="hint">The connection is a secret of each environment; SETUP.md says which ones to create.</p>
+          }
+        }
+
+        @if (spec.deploy.target === 'terraform') {
+          <div class="row">
+            <label>Terraform folder
+              <input name="infraDirectory" [(ngModel)]="spec.deploy.infraDirectory" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+            <label>Terraform version
+              <input name="terraformVersion" [(ngModel)]="spec.deploy.terraformVersion" (ngModelChange)="changed()" placeholder="1.9.8" autocomplete="off">
+            </label>
+          </div>
+          <label>Cloud it manages
+            <select name="terraformCloud" [(ngModel)]="spec.deploy.infraCloud" (ngModelChange)="changed()">
+              <option ngValue="azure">Azure</option>
+              <option ngValue="aws">AWS</option>
+              <option ngValue="gcp">Google Cloud</option>
+            </select>
+          </label>
+          @if (spec.deploy.infraCloud !== 'azure') {
+            <label>Bucket that keeps the state <span class="muted">(one state per environment)</span>
+              <input name="stateBucket" [(ngModel)]="spec.deploy.bucket" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+          }
+        }
+
+        @if (spec.deploy.target === 'terraform' && spec.deploy.infraCloud === 'azure') {
+          <p class="hint">Where the state is kept (one file per environment):</p>
+          <div class="row three">
+            <label>Resource group
+              <input name="stateResourceGroup" [(ngModel)]="spec.deploy.stateResourceGroup" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+            <label>Storage account
+              <input name="stateStorageAccount" [(ngModel)]="spec.deploy.stateStorageAccount" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+            <label>Container
+              <input name="stateContainer" [(ngModel)]="spec.deploy.stateContainer" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+          </div>
+        }
+
+        @if (spec.deploy.target === 'serviceFabric') {
+          <label>Service Fabric application project <span class="muted">(.sfproj; packaged with MSBuild on a Windows agent)</span>
+            <input name="fabricProject" [(ngModel)]="spec.deploy.fabricProject" (ngModelChange)="changed()" placeholder="src/Orders/Orders.sfproj" autocomplete="off">
+          </label>
+          <label>Application type name <span class="muted">(ApplicationTypeName in ApplicationManifest.xml)</span>
+            <input name="fabricType" [(ngModel)]="spec.deploy.appId" (ngModelChange)="changed()" placeholder="OrdersType" autocomplete="off">
+          </label>
+        }
+        @if (spec.deploy.target === 'apiManagement' || spec.deploy.target === 'dataFactory') {
+          <div class="row">
+            <label>{{ spec.deploy.target === 'apiManagement' ? 'OpenAPI file' : 'ARM template of the factory' }}
+              <input name="serviceFile" [(ngModel)]="spec.deploy.bicepTemplate" (ngModelChange)="changed()" [placeholder]="spec.deploy.target === 'apiManagement' ? 'api/openapi.json' : 'adf/ARMTemplateForFactory.json'" autocomplete="off">
+            </label>
+            @if (spec.deploy.target === 'apiManagement') {
+              <label>API identifier
+                <input name="apiId" [(ngModel)]="spec.deploy.appId" (ngModelChange)="changed()" placeholder="orders" autocomplete="off">
+              </label>
+            }
+          </div>
+        }
+
+        @if (spec.deploy.target === 'logicApp') {
+          <label>Folder with the workflows
+            <input name="logicAppFolder" [(ngModel)]="spec.deploy.infraDirectory" (ngModelChange)="changed()" placeholder="workflows" autocomplete="off">
+          </label>
+        }
+
+        @if (spec.deploy.target === 'appStore') {
+          <label class="check">
+            <input type="checkbox" name="submitForReview" [(ngModel)]="spec.deploy.submitForReview" (ngModelChange)="changed()">
+            After the last environment, send the build to App Store review
+          </label>
+        }
+
+        @if (spec.deploy.target === 'bicep' || spec.deploy.target === 'armTemplate' || spec.deploy.target === 'cloudFormation') {
+          <label>Template file
+            <input name="bicepTemplate" [(ngModel)]="spec.deploy.bicepTemplate" (ngModelChange)="changed()" [placeholder]="spec.deploy.target === 'bicep' ? 'infra/main.bicep' : spec.deploy.target === 'armTemplate' ? 'infra/azuredeploy.json' : 'infra/template.yaml'" autocomplete="off">
+          </label>
+        }
+
+        @if (spec.deploy.target === 'gitOps') {
+          <label>Manifests repository <span class="muted">(without https://)</span>
+            <input name="gitOpsRepository" [(ngModel)]="spec.deploy.gitOpsRepository" (ngModelChange)="changed()" placeholder="github.com/contoso/deployments" autocomplete="off">
+          </label>
+        }
+
+        @if (spec.deploy.target === 'awsCdk' || spec.deploy.target === 'pulumi' || spec.deploy.target === 'awsSam') {
+          <div class="row">
+            <label>{{ spec.deploy.target === 'awsCdk' ? 'Folder with cdk.json' : spec.deploy.target === 'awsSam' ? 'Folder with template.yaml' : 'Folder with Pulumi.yaml' }}
+              <input name="infraDirectory" [(ngModel)]="spec.deploy.infraDirectory" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+            @if (spec.deploy.target === 'pulumi') {
+              <label>Cloud it manages
+                <select name="infraCloud" [(ngModel)]="spec.deploy.infraCloud" (ngModelChange)="changed()">
+                  <option ngValue="azure">Azure</option>
+                  <option ngValue="aws">AWS</option>
+                  <option ngValue="gcp">Google Cloud</option>
+                </select>
+              </label>
+            }
+          </div>
+        }
+
+        @if (isInfrastructure) {
+          <label class="check">
+            <input type="checkbox" name="preview" [(ngModel)]="spec.deploy.preview" (ngModelChange)="changed()">
+            Show what will change first (plan, what-if, change set, diff or preview)
+          </label>
+        }
+      </section>
+
+      @if (!isInfrastructure) {
+        <section>
+          <h2>4. Build</h2>
+          <div class="row">
+            <label>Written in
+              <select name="stack" [(ngModel)]="spec.build.stack" (ngModelChange)="changed()">
+                @for (stack of stacks; track stack.value) {
+                  <option [ngValue]="stack.value">{{ stack.label }}</option>
+                }
+              </select>
+            </label>
+            @if (!['none', 'dotNetFramework', 'ios', 'msix', 'cpp'].includes(spec.build.stack)) {
+              <label>Version
+                <input name="version" [(ngModel)]="spec.build.version" (ngModelChange)="changed()" [placeholder]="defaultVersions[spec.build.stack]" autocomplete="off">
+              </label>
+            }
+          </div>
+
+          <div class="row">
+            <label>Runs on
+              <select name="agent" [(ngModel)]="spec.build.agent" (ngModelChange)="changed()">
+                @for (agent of agents; track agent.value) {
+                  <option [ngValue]="agent.value">{{ agent.label }}</option>
+                }
+              </select>
+            </label>
+            @if (selfHostedBuild) {
+              <label>Agent label <span class="muted">(runner label, agent pool, runner tag)</span>
+                <input name="agentLabel" [(ngModel)]="spec.build.agentLabel" (ngModelChange)="changed()" placeholder="build" autocomplete="off">
+              </label>
+            }
+          </div>
+
+          @if (spec.build.stack === 'android' || spec.build.stack === 'ios') {
+            <label>Built with
+              <select name="mobileFramework" [(ngModel)]="spec.build.mobileFramework" (ngModelChange)="changed()">
+                <option ngValue="native">{{ spec.build.stack === 'android' ? 'Gradle (native)' : 'Xcode (native)' }}</option>
+                <option ngValue="reactNative">React Native</option>
+                <option ngValue="maui">.NET MAUI</option>
+              </select>
+            </label>
+          }
+          @if (spec.build.stack === 'android' && spec.build.mobileFramework === 'maui') {
+            <label>Project to publish
+              <input name="mauiProject" [(ngModel)]="spec.build.projectPath" (ngModelChange)="changed()" placeholder="src/App/App.csproj" autocomplete="off">
+            </label>
+          }
+          @if (spec.build.stack === 'ios' || spec.build.stack === 'msix') {
+            <div class="row">
+              <label>{{ spec.build.stack === 'ios' ? 'Workspace or project' : 'Packaging project' }}
+                <input name="projectPath" [(ngModel)]="spec.build.projectPath" (ngModelChange)="changed()" [placeholder]="spec.build.stack === 'ios' ? 'App.xcworkspace' : 'src/App.Package/App.Package.wapproj'" autocomplete="off">
+              </label>
+              @if (spec.build.stack === 'ios') {
+                <label>Scheme
+                  <input name="scheme" [(ngModel)]="spec.build.scheme" (ngModelChange)="changed()" placeholder="App" autocomplete="off">
+                </label>
+                <label>Export options file
+                  <input name="exportOptions" [(ngModel)]="spec.build.exportOptions" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+            </div>
+          } @else if (spec.build.stack === 'dotNet' || spec.build.stack === 'dotNetFramework') {
+            <div class="row">
+              <label>Project to publish
+                <input name="projectPath" [(ngModel)]="spec.build.projectPath" (ngModelChange)="changed()" placeholder="src/Api/Api.csproj" autocomplete="off">
+              </label>
+              <label>Solution or tests <span class="muted">(optional)</span>
+                <input name="testPath" [(ngModel)]="spec.build.testPath" (ngModelChange)="changed()" placeholder="MyApp.slnx" autocomplete="off">
+              </label>
+            </div>
+          } @else if (spec.build.stack !== 'none') {
+            <div class="row">
+              <label>Folder with the code
+                <input name="workingDirectory" [(ngModel)]="spec.build.workingDirectory" (ngModelChange)="changed()" placeholder="." autocomplete="off">
+              </label>
+              @if (spec.build.stack === 'node' && !isContainer) {
+                <label>Folder the build creates
+                  <input name="outputFolder" [(ngModel)]="spec.build.outputFolder" (ngModelChange)="changed()" placeholder="dist" autocomplete="off">
+                </label>
+              }
+            </div>
+          }
+
+          @if (spec.build.stack !== 'none') {
+            <label class="check">
+              <input type="checkbox" name="runTests" [(ngModel)]="spec.build.runTests" (ngModelChange)="changed()">
+              Run the tests
+            </label>
+          }
+
+          <div class="row">
+            <label class="check">
+              <input type="checkbox" name="publishTestResults" [(ngModel)]="spec.build.publishTestResults" (ngModelChange)="changed()">
+              Keep the test results
+            </label>
+            <label class="check">
+              <input type="checkbox" name="auditDependencies" [(ngModel)]="spec.build.auditDependencies" (ngModelChange)="changed()">
+              Fail on packages with known vulnerabilities
+            </label>
+            <label class="check">
+              <input type="checkbox" name="lint" [(ngModel)]="spec.build.lint" (ngModelChange)="changed()">
+              Check the code style (formatter and linter)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="codeScan" [(ngModel)]="spec.build.codeScan" (ngModelChange)="changed()">
+              Analyse the code (Semgrep)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="codeQl" [(ngModel)]="spec.build.codeQl" (ngModelChange)="changed()">
+              Analyse the code with CodeQL (GitHub Actions)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="securityScan" [(ngModel)]="spec.build.securityScan" (ngModelChange)="changed()">
+              Scan for vulnerabilities, secrets and risky settings (Trivy)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="sbom" [(ngModel)]="spec.build.sbom" (ngModelChange)="changed()">
+              Keep the list of components (SBOM)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="cachePackages" [(ngModel)]="spec.build.cachePackages" (ngModelChange)="changed()">
+              Keep the packages between runs
+            </label>
+            <label class="check">
+              <input type="checkbox" name="coverage" [(ngModel)]="spec.build.coverage" (ngModelChange)="changed()">
+              Collect code coverage
+            </label>
+            <label>SonarQube project key <span class="muted">(optional)</span>
+              <input name="sonarProjectKey" [(ngModel)]="spec.build.sonarProjectKey" (ngModelChange)="changed()" autocomplete="off">
+            </label>
+          </div>
+
+          <p class="group">Services for the tests <span class="muted">(started next to the build; the tests read POSTGRES_HOST, POSTGRES_PORT and the like)</span></p>
+          <div class="row">
+            @for (service of services; track service.value) {
+              <label class="check">
+                <input type="checkbox" [name]="'service-' + service.value" [checked]="hasService(service.value)" (change)="toggleService(service.value, $any($event.target).checked)">
+                {{ service.label }}
+              </label>
+            }
+          </div>
+          <label>Also test with these versions <span class="muted">(optional, one per line: a job each, and the deploy waits for all)</span>
+            <textarea name="alsoTestWith" rows="2" [(ngModel)]="alsoTestWith" (ngModelChange)="linesChanged()" placeholder="20" autocomplete="off" spellcheck="false"></textarea>
+          </label>
+
+          @if (spec.build.stack !== 'none') {
+            <details class="feeds" [open]="spec.build.packageFeeds.length > 0">
+              <summary>Private package feeds <span class="muted">({{ feedType }}, optional)</span></summary>
+              <p class="hint">The build also restores from these feeds. Their passwords or tokens are secrets of each pipeline system: SETUP.md says which ones to create.</p>
+              @for (feed of spec.build.packageFeeds; track feed; let index = $index) {
+                <fieldset class="feed">
+                  <legend>
+                    <input class="env-name" [name]="'feed-name-' + index" [(ngModel)]="feed.name" (ngModelChange)="changed()" aria-label="Feed name" autocomplete="off">
+                    <span class="tools">
+                      <button type="button" class="icon" (click)="removeFeed(feed)" aria-label="Remove feed">✕</button>
+                    </span>
+                  </legend>
+                  <div class="row">
+                    <label>Where the packages are
+                      <select [name]="'feed-kind-' + index" [(ngModel)]="feed.kind" (ngModelChange)="changed()">
+                        @for (kind of feedKinds; track kind.value) {
+                          <option [ngValue]="kind.value">{{ kind.label }}</option>
+                        }
+                      </select>
+                    </label>
+                    <label>Type
+                      <select [name]="'feed-type-' + index" [(ngModel)]="feed.type" (ngModelChange)="changed()">
+                        <option ngValue="nuGet">NuGet</option>
+                        <option ngValue="npm">npm</option>
+                        <option ngValue="maven">Maven</option>
+                        <option ngValue="pip">pip (Python)</option>
+                        <option ngValue="go">Go modules</option>
+                        <option ngValue="rubyGems">RubyGems</option>
+                        <option ngValue="composer">Composer (PHP)</option>
+                        <option ngValue="cargo">Cargo (Rust)</option>
+                        <option ngValue="hex">Hex (Elixir)</option>
+                        <option ngValue="pub">pub (Flutter)</option>
+                        <option ngValue="swiftRegistry">Swift registry</option>
+                        <option ngValue="conan">Conan (C and C++)</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="hint">{{ feedKindHint(feed.kind) }}</p>
+                  <div class="row">
+                    @switch (feed.kind) {
+                      @case ('azureArtifacts') {
+                        <label>Organization
+                          <input [name]="'feed-org-' + index" [(ngModel)]="feed.organization" (ngModelChange)="changed()" placeholder="contoso" autocomplete="off">
+                        </label>
+                        <label>Project <span class="muted">(project-scoped feeds)</span>
+                          <input [name]="'feed-project-' + index" [(ngModel)]="feed.project" (ngModelChange)="changed()" autocomplete="off">
+                        </label>
+                        <label>Feed
+                          <input [name]="'feed-feed-' + index" [(ngModel)]="feed.feed" (ngModelChange)="changed()" placeholder="packages" autocomplete="off">
+                        </label>
+                      }
+                      @case ('gitHubPackages') {
+                        <label>Owner (user or organization)
+                          <input [name]="'feed-org-' + index" [(ngModel)]="feed.organization" (ngModelChange)="changed()" placeholder="contoso" autocomplete="off">
+                        </label>
+                        @if (feed.type === 'maven') {
+                          <label>Repository
+                            <input [name]="'feed-feed-' + index" [(ngModel)]="feed.feed" (ngModelChange)="changed()" autocomplete="off">
+                          </label>
+                        }
+                      }
+                      @case ('jFrog') {
+                        <label>JFrog address
+                          <input [name]="'feed-url-' + index" [(ngModel)]="feed.url" (ngModelChange)="changed()" placeholder="https://company.jfrog.io" autocomplete="off">
+                        </label>
+                        <label>Repository key
+                          <input [name]="'feed-feed-' + index" [(ngModel)]="feed.feed" (ngModelChange)="changed()" placeholder="nuget-virtual" autocomplete="off">
+                        </label>
+                        @if (uses('gitHubActions')) {
+                          <label>OpenID Connect integration <span class="muted">(GitHub Actions, optional)</span>
+                            <input [name]="'feed-oidc-' + index" [(ngModel)]="feed.jFrogOidcProvider" (ngModelChange)="changed()" placeholder="github" autocomplete="off">
+                          </label>
+                        }
+                      }
+                      @default {
+                        <label>Feed URL
+                          <input [name]="'feed-url-' + index" [(ngModel)]="feed.url" (ngModelChange)="changed()" placeholder="https://packages.contoso.com/nuget/v3/index.json" autocomplete="off">
+                        </label>
+                      }
+                    }
+                    @if (feed.type === 'npm') {
+                      <label>Scope <span class="muted">{{ feed.kind === 'gitHubPackages' ? '(@owner)' : '(optional)' }}</span>
+                        <input [name]="'feed-scope-' + index" [(ngModel)]="feed.scope" (ngModelChange)="changed()" placeholder="@contoso" autocomplete="off">
+                      </label>
+                    }
+                  </div>
+                  <label class="check">
+                    <input type="checkbox" [name]="'feed-inrepo-' + index" [(ngModel)]="feed.inRepositoryConfig" (ngModelChange)="changed()">
+                    The repository's own configuration (nuget.config, .npmrc, pom.xml) already lists it with this name (only the credentials are added)
+                  </label>
+                </fieldset>
+              }
+              <button type="button" (click)="addFeed()">+ Add a feed</button>
+            </details>
+          }
+
+          <details [open]="customCommands.length > 0">
+            <summary>Your own build commands <span class="muted">(replace the ones above)</span></summary>
+            <textarea name="customCommands" rows="4" [(ngModel)]="customCommands" (ngModelChange)="linesChanged()"
+              placeholder="One command per line. Leave what is deployed in out/app." autocomplete="off" spellcheck="false"></textarea>
+          </details>
+        </section>
+      }
+
+      <section>
+        <h2>{{ isInfrastructure ? 4 : 5 }}. Environments</h2>
+        <label>How code moves
+          <select name="flow" [(ngModel)]="spec.flow" (ngModelChange)="changed()">
+            @for (flow of flows; track flow.value) {
+              <option [ngValue]="flow.value">{{ flow.label }}</option>
+            }
+          </select>
+        </label>
+        <p class="hint">{{ flowHint }}</p>
+        @if (spec.flow === 'tag') {
+          <label>Tags that deploy
+            <input name="tagPattern" [(ngModel)]="spec.tagPattern" (ngModelChange)="changed()" placeholder="v*" autocomplete="off">
+          </label>
+        }
+        @if (spec.flow !== 'branchPerEnvironment') {
+          <label>{{ spec.flow === 'tag' ? 'Branch that builds' : 'Branch that deploys' }}
+            <input name="mainBranch" [(ngModel)]="spec.mainBranch" (ngModelChange)="changed()" autocomplete="off">
+          </label>
+        }
+
+        @for (environment of spec.environments; track environment; let index = $index, first = $first, last = $last) {
+          <fieldset class="environment">
+            <legend>
+              <span class="step">{{ index + 1 }}</span>
+              <input class="env-name" [name]="'env-name-' + index" [(ngModel)]="environment.name" (ngModelChange)="changed()" aria-label="Environment name" autocomplete="off">
+              <span class="tools">
+                <button type="button" class="icon" (click)="moveEnvironment(index, -1)" [disabled]="first" aria-label="Move up">↑</button>
+                <button type="button" class="icon" (click)="moveEnvironment(index, 1)" [disabled]="last" aria-label="Move down">↓</button>
+                <button type="button" class="icon" (click)="removeEnvironment(environment)" [disabled]="spec.environments.length === 1" aria-label="Remove">✕</button>
+              </span>
+            </legend>
+            <div class="row">
+              @if (spec.flow === 'branchPerEnvironment') {
+                <label>Branch
+                  <input [name]="'env-branch-' + index" [(ngModel)]="environment.branch" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+              @if (needsGroup || spec.deploy.target === 'bicep') {
+                <label>{{ groupLabel }}
+                  <input [name]="'env-group-' + index" [(ngModel)]="environment.resourceGroup" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+              @if (resourceLabels[spec.deploy.target]) {
+                <label>{{ resourceLabels[spec.deploy.target] }}
+                  <input [name]="'env-resource-' + index" [(ngModel)]="environment.resourceName" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+              @if (usesSlot) {
+                <label>Slot <span class="muted">(optional)</span>
+                  <input [name]="'env-slot-' + index" [(ngModel)]="environment.slot" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+              @if (isInfrastructure || usesHelm || spec.deploy.target === 'gitOps') {
+                <label>{{ spec.deploy.target === 'gitOps' ? 'File that names the image' : usesHelm ? 'Helm values file' : spec.deploy.target === 'terraform' ? '.tfvars file' : 'Parameters file' }} <span class="muted">(optional)</span>
+                  <input [name]="'env-params-' + index" [(ngModel)]="environment.parametersFile" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+              @if (isServer) {
+                <label>Server label <span class="muted">(runner label, VM tag)</span>
+                  <input [name]="'env-label-' + index" [(ngModel)]="environment.serverLabel" (ngModelChange)="changed()" placeholder="web-prod" autocomplete="off">
+                </label>
+              }
+              @if (isWindows) {
+                <label>Folder <span class="muted">(optional, uses the installed one)</span>
+                  <input [name]="'env-path-' + index" [(ngModel)]="environment.targetPath" (ngModelChange)="changed()" placeholder="D:\Apps\Billing" autocomplete="off">
+                </label>
+              }
+              @if (spec.deploy.target === 'iis') {
+                <label>Application pool <span class="muted">(optional)</span>
+                  <input [name]="'env-pool-' + index" [(ngModel)]="environment.appPool" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+              <label>End-to-end tests <span class="muted">(optional folder with Playwright tests)</span>
+                <input [name]="'env-e2e-' + index" [(ngModel)]="environment.endToEndFolder" (ngModelChange)="changed()" placeholder="e2e" autocomplete="off">
+              </label>
+              <label>Load test <span class="muted">(optional k6 script)</span>
+                <input [name]="'env-load-' + index" [(ngModel)]="environment.loadTestScript" (ngModelChange)="changed()" placeholder="tests/load.js" autocomplete="off">
+              </label>
+              <label>Deploy window <span class="muted">(optional, UTC days and hours)</span>
+                <input [name]="'env-window-' + index" [(ngModel)]="environment.deployWindow" (ngModelChange)="changed()" placeholder="1-5 08-18" autocomplete="off">
+              </label>
+              @if (isWindows || (supportsStrategy && spec.deploy.strategy !== 'standard')) {
+                <label>Health check address <span class="muted">(optional)</span>
+                  <input [name]="'env-health-' + index" [(ngModel)]="environment.healthCheckUrl" (ngModelChange)="changed()" placeholder="https://app.contoso.com/health" autocomplete="off">
+                </label>
+              }
+              @if (uses('azureDevOps') && needsAzure) {
+                <label>Azure DevOps service connection
+                  <input [name]="'env-connection-' + index" [(ngModel)]="environment.serviceConnection" (ngModelChange)="changed()" autocomplete="off">
+                </label>
+              }
+            </div>
+            <label class="check">
+              <input type="checkbox" [name]="'env-approval-' + index" [(ngModel)]="environment.requireApproval" (ngModelChange)="changed()">
+              Someone approves before it changes
+            </label>
+            @if (isWindows && spec.deploy.remote) {
+              <label>Server addresses <span class="muted">(one per line; they are updated one after another)</span>
+                <textarea [name]="'env-hosts-' + index" rows="2" [value]="environment.hosts.join('\n')" (input)="environment.hosts = linesOf($event); changed()" placeholder="app1.contoso.com" autocomplete="off" spellcheck="false"></textarea>
+              </label>
+            }
+            @if (isServer) {
+              <label>Several servers <span class="muted">(optional: one runner label or tag per line; they are updated one after another)</span>
+                <textarea [name]="'env-servers-' + index" rows="2" [value]="environment.servers.join('\n')" (input)="environment.servers = linesOf($event); changed()" autocomplete="off" spellcheck="false"></textarea>
+              </label>
+            }
+            @if (usesSettings) {
+              <details [open]="environment.settings.length > 0">
+                <summary>Settings of this environment <span class="muted">(optional)</span></summary>
+                @for (setting of environment.settings; track setting; let settingIndex = $index) {
+                  <div class="row setting">
+                    <label>Name
+                      <input [name]="'env-' + index + '-setting-name-' + settingIndex" [(ngModel)]="setting.name" (ngModelChange)="changed()" placeholder="ConnectionStrings:Default" autocomplete="off">
+                    </label>
+                    @if (setting.secret === null) {
+                      <label>Value
+                        <input [name]="'env-' + index + '-setting-value-' + settingIndex" [(ngModel)]="setting.value" (ngModelChange)="changed()" autocomplete="off">
+                      </label>
+                    } @else {
+                      <label>Name of the secret
+                        <input [name]="'env-' + index + '-setting-secret-' + settingIndex" [(ngModel)]="setting.secret" (ngModelChange)="changed()" placeholder="DB_CONNECTION" autocomplete="off">
+                      </label>
+                    }
+                    <label class="check">
+                      <input type="checkbox" [name]="'env-' + index + '-setting-is-secret-' + settingIndex" [checked]="setting.secret !== null" (change)="toggleSecret(setting, $any($event.target).checked)">
+                      Secret
+                    </label>
+                    <button type="button" class="icon" (click)="removeSetting(environment, setting)" aria-label="Remove setting">✕</button>
+                  </div>
+                }
+                <button type="button" (click)="addSetting(environment)">+ Add a setting</button>
+              </details>
+            }
+            <details [open]="environment.beforeDeploy.length > 0 || environment.afterDeploy.length > 0">
+              <summary>Your own commands before and after the deploy <span class="muted">({{ commandShell }}, optional)</span></summary>
+              <div class="row">
+                <label>Before
+                  <textarea [name]="'env-before-' + index" rows="3" [value]="environment.beforeDeploy.join('\n')" (input)="environment.beforeDeploy = linesOf($event); changed()" autocomplete="off" spellcheck="false"></textarea>
+                </label>
+                <label>After it succeeds
+                  <textarea [name]="'env-after-' + index" rows="3" [value]="environment.afterDeploy.join('\n')" (input)="environment.afterDeploy = linesOf($event); changed()" autocomplete="off" spellcheck="false"></textarea>
+                </label>
+              </div>
+            </details>
+          </fieldset>
+        }
+        <button type="button" (click)="addEnvironment()">+ Add an environment</button>
+      </section>
+
+      <section>
+        <h2>{{ isInfrastructure ? 5 : 6 }}. When it runs</h2>
+        <label class="check">
+          <input type="checkbox" name="buildPullRequests" [(ngModel)]="spec.buildPullRequests" (ngModelChange)="changed()">
+          Build and test pull requests (they never deploy)
+        </label>
+        @if ((spec.deploy.target === 'appService' || spec.deploy.target === 'containerApp') && spec.buildPullRequests) {
+          <label class="check">
+            <input type="checkbox" name="previewPullRequests" [(ngModel)]="spec.deploy.previewPullRequests" (ngModelChange)="changed()">
+            Give every pull request its own copy of the application, removed when it closes (App Service: GitHub Actions and GitLab; Container Apps with blue-green or canary: GitHub Actions)
+          </label>
+        }
+        <label class="check">
+          <input type="checkbox" name="manualRun" [(ngModel)]="spec.manualRun" (ngModelChange)="changed()">
+          Can be started by hand
+        </label>
+        <label class="check">
+          <input type="checkbox" name="severalApps" [(ngModel)]="spec.severalApps" (ngModelChange)="changed()">
+          The repository holds several applications (files are named after this one)
+        </label>
+        <label class="check">
+          <input type="checkbox" name="notifyOnFailure" [(ngModel)]="spec.notifyOnFailure" (ngModelChange)="changed()">
+          Post to a webhook when a run fails (secret NOTIFY_WEBHOOK)
+        </label>
+        <label class="check">
+          <input type="checkbox" name="notifyOnSuccess" [(ngModel)]="spec.notifyOnSuccess" (ngModelChange)="changed()">
+          Post to the webhook when the last environment is deployed
+        </label>
+        @if (spec.flow === 'tag') {
+          <label class="check">
+            <input type="checkbox" name="createRelease" [(ngModel)]="spec.createRelease" (ngModelChange)="changed()">
+            Publish a release for the tag, with notes from the commits (GitHub and GitLab)
+          </label>
+        }
+        <label>Also on a schedule <span class="muted">(optional: cron with five fields, UTC)</span>
+          <input name="schedule" [(ngModel)]="spec.schedule" (ngModelChange)="changed()" placeholder="0 6 * * 1-5" autocomplete="off">
+        </label>
+        <div class="row">
+          <label>Shared templates repository <span class="muted">(optional: the pipeline becomes a template there and a short file here)</span>
+            <input name="templateRepository" [(ngModel)]="spec.templateRepository" (ngModelChange)="changed()" placeholder="my-org/pipeline-templates" autocomplete="off">
+          </label>
+          <label>Branch or tag of the templates
+            <input name="templateRef" [(ngModel)]="spec.templateRef" (ngModelChange)="changed()" placeholder="main" autocomplete="off">
+          </label>
+        </div>
+        <label>Only when these paths change <span class="muted">(optional, one per line)</span>
+          <textarea name="pathFilters" rows="2" [(ngModel)]="pathFilters" (ngModelChange)="linesChanged()" placeholder="src/**" autocomplete="off" spellcheck="false"></textarea>
+        </label>
+      </section>
+    </form>
+
+    <section class="output">
+      @if (proposal(); as proposal) {
+        <div class="proposal" aria-labelledby="proposal-title">
+          <h2 id="proposal-title">{{ fromFile() ? 'Read from your YAML file' : 'AI proposal' }}</h2>
+          <p class="hint">Nothing has changed yet. Review the proposal and the code below, then approve it or ask for changes.</p>
+          @if (proposal.summary) {
+            <p class="summary">{{ proposal.summary }}</p>
+          }
+
+          @if (proposal.review.length > 0) {
+            <h3>Needs your review ({{ proposal.review.length }})</h3>
+            <ul class="review">
+              @for (item of proposal.review; track $index) {
+                <li><span class="flag" aria-hidden="true">!</span><span><strong>{{ areaLabels[item.area] }}:</strong> {{ item.text }}</span></li>
+              }
+            </ul>
+          }
+
+          @if (proposal.questions.length > 0) {
+            <h3>Questions</h3>
+            <ul class="questions">
+              @for (question of proposal.questions; track $index) {
+                <li>{{ question }}</li>
+              }
+            </ul>
+          }
+
+          @if (proposal.messages.length > 0) {
+            <h3>Checks</h3>
+            <ul class="messages">
+              @for (message of proposal.messages; track $index) {
+                <li [class]="message.severity">{{ message.text }}</li>
+              }
+            </ul>
+          }
+
+          @if (proposal.changes.length > 0) {
+            <h3>Changes ({{ proposal.changes.length }})</h3>
+            <ul class="changes">
+              @for (change of proposal.changes; track $index) {
+                <li>{{ change }}</li>
+              }
+            </ul>
+          }
+
+          <label>Correct it
+            <textarea rows="2" autocomplete="off" spellcheck="true" [value]="correction()" (input)="correction.set(textOf($event))"
+                      placeholder="For example: use GitLab too and add a staging environment before prod."></textarea>
+          </label>
+          @if (proposalError(); as error) {
+            <p class="message error" role="alert">{{ error }}</p>
+          }
+          <div class="decision">
+            <button type="button" [disabled]="proposing() || correction().trim().length === 0" (click)="correct()">{{ proposing() ? 'Thinking…' : 'Ask for changes' }}</button>
+            <span class="spacer"></span>
+            <button type="button" (click)="discard()" [disabled]="proposing()">Discard</button>
+            <button type="button" class="primary" (click)="approve()" [disabled]="proposing()">Approve</button>
+          </div>
+          @if (proposalErrors() > 0) {
+            <p class="hint">The proposal has {{ proposalErrors() }} item(s) to fix; after approving, complete them in the settings.</p>
+          }
+        </div>
+      } @else if (errors().length > 0 || warnings().length > 0) {
+        <ul class="messages">
+          @for (message of errors(); track message.text) {
+            <li class="error">{{ message.text }}</li>
+          }
+          @for (message of warnings(); track message.text) {
+            <li class="warning">{{ message.text }}</li>
+          }
+        </ul>
+      }
+
+      @if (files().length > 0) {
+        <nav class="tabs" role="tablist">
+          @for (item of files(); track item.path; let index = $index) {
+            <button type="button" role="tab" [class.active]="file()?.path === item.path" [attr.aria-selected]="file()?.path === item.path" (click)="selected.set(index)">{{ item.path }}</button>
+          }
+        </nav>
+        @if (file(); as current) {
+          <div class="code-tools">
+            <span class="muted">{{ current.content.split('\n').length }} lines</span>
+            <button type="button" (click)="copy()">Copy</button>
+            <button type="button" (click)="downloadFile()">Download this file</button>
+          </div>
+          <pre class="code"><code>{{ current.content }}</code></pre>
+        }
+      } @else if (!proposal() && errors().length > 0) {
+        <p class="empty">Fix the items above and the YAML appears here.</p>
+      }
+    </section>
+  </main>
+}
+
+@if (describing()) {
+  <div class="backdrop" (click)="describing.set(false)"></div>
+  <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="describe-title" (keydown.escape)="describing.set(false)">
+    <h2 id="describe-title">Describe what you want to deploy</h2>
+    <p class="hint">Say it in your own words. The AI proposes the settings; nothing changes until you approve them.</p>
+    <textarea rows="6" autocomplete="off" spellcheck="true" [value]="description()" (input)="description.set(textOf($event))"
+              placeholder="For example: a .NET API in src/Orders/Orders.csproj to Azure App Service, with GitHub Actions and Azure DevOps. Dev from develop, prod from main with approval."></textarea>
+    <fieldset class="mode">
+      <label class="check"><input type="radio" name="mode" autocomplete="off" [checked]="!fresh()" (change)="fresh.set(false)"> Change the current settings</label>
+      <label class="check"><input type="radio" name="mode" autocomplete="off" [checked]="fresh()" (change)="fresh.set(true)"> Start new settings</label>
+    </fieldset>
+    @if (aiStatus(); as status) {
+      @if (status.problem) {
+        <p class="message warning">{{ status.problem }}</p>
+      }
+      <p class="hint small">Your description and the current settings are sent to {{ status.provider === 'Anthropic' ? 'Claude (Anthropic)' : status.provider }}{{ status.model ? ', ' + status.model : '' }}. Do not include passwords, keys or tokens.</p>
+    }
+    @if (proposalError(); as error) {
+      <p class="message error" role="alert">{{ error }}</p>
+    }
+    <div class="decision">
+      <span class="spacer"></span>
+      <button type="button" (click)="describing.set(false)">Cancel</button>
+      <button type="button" class="primary" [disabled]="proposing() || description().trim().length === 0" (click)="propose()">{{ proposing() ? 'Thinking…' : 'Propose settings' }}</button>
+    </div>
+  </section>
+}
+
+@if (notice(); as text) {
+  <div class="notice" role="status">{{ text }}</div>
+}

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CICDPipelineGenerator.Application\CICDPipelineGenerator.Application.csproj" />
+    <ProjectReference Include="..\CICDPipelineGenerator.Domain\CICDPipelineGenerator.Domain.csproj" />
+    <ProjectReference Include="..\CICDPipelineGenerator.Infrastructure\CICDPipelineGenerator.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CICDPipelineGenerator.Server.IntegrationTests" />
+  </ItemGroup>
+
+</Project>
